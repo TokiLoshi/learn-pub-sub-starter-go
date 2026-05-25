@@ -75,7 +75,7 @@ case "resume":
 		)
 	case "quit":
 		fmt.Println("Quitting...")
-		break
+		return
 	default:
 		fmt.Println("command not recognized... please try again")
 		continue

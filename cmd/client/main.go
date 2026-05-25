@@ -46,10 +46,63 @@ func main() {
 		log.Fatalf("could not declare and bind")
 	}
 
+	gameState := gamelogic.NewGameState(userName)
 
 	defer ch.Close()
 
 	fmt.Printf("Quueu %s delcared and bound\n", queue.Name)
+
+	// ch, err := connection.Channel()
+	// if err != nil {
+	// 	log.Fatalf("error creatign channel: %v", err)
+	// }
+
+
+	for {
+
+		input := gamelogic.GetInput()
+
+		if len(input) == 0 {
+			continue
+		}
+
+		command := input[0]
+		switch command {
+		case "spawn":
+			fmt.Println("Spawn command received")
+			// allow user to add new unit to map 
+			err = gameState.CommandSpawn(input)
+			if err != nil {
+				log.Fatalf("Could not spawn")
+			}
+		case "move":
+			fmt.Println("move command")
+			// allows player to move units to new location 
+			move, err := gameState.CommandMove(input)
+			if err != nil {
+				fmt.Println("Could not make move:")
+				continue
+			}
+			fmt.Printf("Succesfully made move: %v", move)
+			// if successful print message it works 
+		case "status":
+			fmt.Println("status command received")
+			gameState.CommandStatus() 
+		case "help":
+			fmt.Println("help command received")
+			gamelogic.PrintClientHelp()
+		case "spam":
+			fmt.Println("Spamming not allowed yet")
+		case "quit":
+			fmt.Println("quitting")
+			gamelogic.PrintQuit()
+			return 
+		default:
+			fmt.Println("command not recognized... please try again!")
+			continue
+		}
+
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
