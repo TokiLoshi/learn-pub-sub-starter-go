@@ -1,12 +1,8 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	pubsub "github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -25,24 +21,28 @@ func main() {
 		log.Fatalf("could not connect %v", err)
 	} 
 
-
-
 	defer connection.Close()
-	fmt.Println("Successfully connected!")
+	fmt.Println("Successfully connected to Rabbit!")
 
 	ch, err := connection.Channel()
 	if err != nil {
 		log.Fatalf("error creating channel: %v", err)
 	}
 
+	_, _, err = pubsub.DeclareAndBind(
+		connection, 
+		routing.ExchangePerilTopic, 
+		routing.GameLogSlug,
+		routing.GameLogSlug + ".*",
+		pubsub.SimpleQueueDurable,
+	)
+	if err != nil {
+		log.Fatalf("error publishing topic: %v", err)
+	}
+
 	gamelogic.PrintServerHelp()
-	scanner := bufio.NewScanner(os.Stdin)
 
 	for {
-		fmt.Print("> ")
-		if !scanner.Scan() {
-			break
-		}
 		input := gamelogic.GetInput()
 
 		if len(input) == 0 {
@@ -52,14 +52,14 @@ func main() {
 		command := input[0]
 		
 		switch command {
-		case "pause":
-			fmt.Println("sending pause message") 
-			err = pubsub.PublishJSON(
+	case "pause":
+		fmt.Println("sending pause message") 
+		err = pubsub.PublishJSON(
 			ch,
 			routing.ExchangePerilDirect,
 			routing.PauseKey,
 			routing.PlayingState{IsPaused: true},
-	)
+		)
 	if err != nil {
 		log.Fatalf("could not publish pause message: %v", err)
 	}
@@ -73,6 +73,9 @@ case "resume":
 			routing.PauseKey, 
 			routing.PlayingState{IsPaused: false},
 		)
+		if err != nil {
+			log.Fatalf("could not publish resume message: %v", err)
+		}
 	case "quit":
 		fmt.Println("Quitting...")
 		return
@@ -82,11 +85,4 @@ case "resume":
 		}
 	}
 
-	
-
-
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	<- sigChan
-	fmt.Println("Shutting down")
 }
