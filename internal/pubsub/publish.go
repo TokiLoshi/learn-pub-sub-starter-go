@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"github.com/rabbitmq/amqp091-go"
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -69,3 +70,34 @@ return ch.PublishWithContext(
 
 
 }
+
+func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queue SimpleQueueType, handler func(T),) error {
+	ch, validQueue, err := DeclareAndBind(conn, exchange, queueName, key, queue)
+	if err != nil {
+		log.Fatalf("Could not declare and bind!")
+	}
+	consumerString := ""
+	deliveries, err := ch.Consume(
+		validQueue.Name, 
+		consumerString, 
+		false, 
+		false, 
+		false, 
+		false, 
+		nil)
+
+		go func() {
+			for delivery := range deliveries {
+				var target T
+				err := json.Unmarshal(delivery.Body, &target)
+				if err != nil {
+					log.Fatalf("Could not unmarshall body")
+				}
+				handler(target)
+				delivery.Ack(false)
+			}
+		}()
+
+		return nil 
+}
+
