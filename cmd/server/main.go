@@ -29,12 +29,13 @@ func main() {
 		log.Fatalf("error creating channel: %v", err)
 	}
 
-	_, _, err = pubsub.DeclareAndBind(
+	err = pubsub.SubscribeGob(
 		connection, 
 		routing.ExchangePerilTopic, 
 		routing.GameLogSlug,
 		routing.GameLogSlug + ".*",
 		pubsub.SimpleQueueDurable,
+		handlerGameLog(),
 	)
 	if err != nil {
 		log.Fatalf("error publishing topic: %v", err)
@@ -85,4 +86,13 @@ case "resume":
 		}
 	}
 
+}
+
+func handlerGameLog() func(routing.GameLog) pubsub.AckType {
+	return func(gl routing.GameLog) pubsub.AckType {
+		defer fmt.Print("> ")
+		gamelogic.WriteLog(gl)
+		return pubsub.Ack
+
+	}
 }

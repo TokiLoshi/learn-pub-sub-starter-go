@@ -1,7 +1,9 @@
 package pubsub
 
 import (
+	"bytes"
 	"context"
+	"encoding/gob"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -34,7 +36,9 @@ func DeclareAndBind(
 		queueType == SimpleQueueTransient,
 		queueType == SimpleQueueTransient,
 		false,
-		nil,
+		amqp.Table{
+			"x-dead-letter-exchange": "peril_dlx",
+		},
 
 	)
 	if err != nil {
@@ -63,7 +67,7 @@ return ch.PublishWithContext(
 	false, 
 	false, 
 	amqp091.Publishing{
-		ContentType: "application.json()", 
+		ContentType: "application.json", 
 		Body: data,
 	},
 )
@@ -71,13 +75,25 @@ return ch.PublishWithContext(
 
 }
 
-func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queue SimpleQueueType, handler func(T),) error {
+type AckType int 
+const (
+	Ack AckType = iota 
+	NackRequeue 
+	NackDiscard 
+)
+
+func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string, queue SimpleQueueType, handler func(T) AckType) error {
 	ch, validQueue, err := DeclareAndBind(conn, exchange, queueName, key, queue)
 	if err != nil {
 		log.Fatalf("Could not declare and bind!")
+		
 	}
 	consumerString := ""
-	deliveries, err := ch.Consume(
+	err = ch.Qos(10, 0, false) 
+	if err != nil {
+		return fmt.Errorf("Could not set QoS: %w", err)
+	}
+	msgs, err := ch.Consume(
 		validQueue.Name, 
 		consumerString, 
 		false, 
@@ -87,17 +103,98 @@ func SubscribeJSON[T any](conn *amqp.Connection, exchange, queueName, key string
 		nil)
 
 		go func() {
-			for delivery := range deliveries {
+			for msg := range msgs {
 				var target T
-				err := json.Unmarshal(delivery.Body, &target)
+				err := json.Unmarshal(msg.Body, &target)
 				if err != nil {
 					log.Fatalf("Could not unmarshall body")
+					msg.Nack(false, true)
 				}
-				handler(target)
-				delivery.Ack(false)
+				ackType := handler(target)
+				switch ackType {
+				case Ack:
+					msg.Ack(false)
+					fmt.Println("Ack")
+				case NackRequeue:
+					msg.Nack(false, true)
+					fmt.Println("NackRequeue")
+					
+				case NackDiscard: 
+					msg.Nack(false, false)
+					fmt.Println("Nack")
+				}
+
 			}
 		}()
 
 		return nil 
 }
 
+func PublishGob[T any](ch *amqp.Channel, exchange, key string, val T) error {
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	err := enc.Encode(val)
+	if err != nil {
+		return fmt.Errorf("could not encode value: %w", err)
+	}
+	ctx := context.Background()
+	return ch.PublishWithContext(
+		ctx, 
+		exchange,
+		key, 
+		false, 
+		false,
+		amqp091.Publishing{
+			ContentType: "application/gob",
+			Body: buf.Bytes(),
+		},
+	)
+}
+
+func SubscribeGob[T any](conn *amqp.Connection, exchange, queueName, key string, queue SimpleQueueType, handler func(T) AckType) error {
+	ch, validQueue, err := DeclareAndBind(conn, exchange, queueName, key, queue)
+	if err != nil {
+		log.Fatalf("Could not declare and bind!")
+	}
+	consumerString := ""
+	err = ch.Qos(10, 0, false) 
+	if err != nil { 
+		return fmt.Errorf("Could not set QoS: %w", err)
+	}
+	msgs, err := ch.Consume(
+		validQueue.Name,
+		consumerString,
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	go func() {
+		for msg := range msgs {
+			var target T 
+			buf := bytes.NewBuffer(msg.Body)
+			dec := gob.NewDecoder(buf)
+			err := dec.Decode(&target)
+			if err != nil {
+				log.Printf("could not decode message: %v", err)
+				msg.Nack(false, false)
+				continue
+			}
+			ackType := handler(target)
+		switch ackType {
+		case Ack:
+			msg.Ack(false)
+			fmt.Println("Ack")
+		case NackRequeue: 
+			msg.Nack(false, true)
+			fmt.Println("NackRequeue")
+		case NackDiscard:
+			msg.Nack(false, false)
+			fmt.Println("Nack")
+		}
+		}
+		
+	}()
+	return nil
+}
